@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="ru">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="theme-color" content="#101827">
+  <title>Agent Voice Portal</title>
+  <style>
+    :root { color-scheme: dark; --bg:#0b1220; --panel:#111c2e; --border:#29384e; --text:#f3f6fb; --muted:#a9b8cc; --accent:#75a7ff; --danger:#ff9a9a; --ok:#8be0b0; }
+    * { box-sizing:border-box; }
+    html,body { margin:0; min-height:100%; background:var(--bg); color:var(--text); font-family:system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif; }
+    body { min-height:100dvh; padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom); }
+    button,input { font:inherit; }
+    button { cursor:pointer; touch-action:manipulation; }
+    .shell { width:min(100%,900px); min-height:100dvh; margin:0 auto; display:flex; flex-direction:column; padding:clamp(12px,3vw,24px); gap:14px; }
+    header { display:flex; align-items:center; justify-content:space-between; gap:10px; }
+    h1 { font-size:clamp(20px,4vw,28px); margin:0; letter-spacing:-.03em; }
+    .subtitle { color:var(--muted); font-size:13px; margin-top:4px; }
+    .panel { background:var(--panel); border:1px solid var(--border); border-radius:20px; padding:clamp(16px,4vw,26px); }
+    .login { width:100%; max-width:480px; margin:auto; }
+    label { display:block; color:var(--muted); font-size:14px; margin:16px 0 7px; }
+    input { width:100%; min-height:48px; padding:12px 14px; border-radius:12px; border:1px solid var(--border); background:#0a1322; color:var(--text); outline:none; }
+    input:focus { border-color:var(--accent); }
+    .primary { border:0; border-radius:13px; background:var(--accent); color:#081326; font-weight:700; min-height:48px; padding:12px 18px; }
+    .primary:disabled, button:disabled { opacity:.45; cursor:not-allowed; }
+    .wide { width:100%; margin-top:18px; }
+    .note { color:var(--muted); font-size:12px; line-height:1.5; margin-top:14px; }
+    .error { color:var(--danger); white-space:pre-wrap; line-height:1.5; }
+    .status { color:var(--muted); font-size:13px; min-height:18px; }
+    #workspace { display:none; flex:1; min-height:0; }
+    .workspace { display:flex; flex-direction:column; flex:1; min-height:0; gap:12px; }
+    .feed-head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
+    .feed-head strong { font-size:16px; }
+    .badge { color:var(--muted); font-size:12px; text-align:right; }
+    .feed { flex:1; min-height:220px; max-height:calc(100dvh - 250px); overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; display:flex; flex-direction:column; gap:10px; padding:12px; border:1px solid var(--border); background:#080f1b; border-radius:16px; }
+    .event { padding:12px 13px; border:1px solid #24334a; border-radius:13px; background:#111c2e; overflow-wrap:anywhere; white-space:pre-wrap; line-height:1.45; font-size:14px; }
+    .event.error { border-color:#653d4b; color:#ffd5da; }
+    .event.warning { border-color:#675638; color:#ffe7b4; }
+    .event .meta { display:flex; justify-content:space-between; gap:8px; color:var(--muted); font-size:11px; margin-bottom:6px; }
+    .composer { display:grid; grid-template-columns:1fr auto; gap:8px; }
+    .composer input { min-width:0; }
+    .send { min-width:76px; }
+    .voice-row { display:flex; gap:8px; align-items:center; }
+    .voice { width:54px; min-width:54px; height:54px; border:0; border-radius:50%; background:#d8e5ff; color:#0a1830; font-size:23px; font-weight:800; }
+    .voice.listening { background:#ff8f9b; animation:pulse 1.4s infinite; }
+    @keyframes pulse { 50% { box-shadow:0 0 0 8px #ff8f9b26; } }
+    .voice-caption { flex:1; color:var(--muted); font-size:12px; line-height:1.4; }
+    .toggle { display:flex; align-items:center; gap:8px; color:var(--muted); font-size:12px; }
+    .toggle input { width:18px; min-height:18px; }
+    .small-button { border:1px solid var(--border); background:#17243a; color:var(--text); border-radius:10px; min-height:38px; padding:8px 12px; }
+    .hidden { display:none !important; }
+    @media (min-width:700px) { .shell { min-height:100vh; } .feed { max-height:calc(100vh - 270px); } }
+    @media (max-width:380px) { .shell { padding:10px; gap:10px; } .panel { padding:14px; border-radius:16px; } .feed { padding:8px; max-height:calc(100dvh - 270px); } .event { padding:10px; font-size:13px; } .composer { grid-template-columns:1fr 68px; } }
+  </style>
+</head>
+<body>
+<div class="shell">
+  <header>
+    <div><h1>Agent Voice Portal</h1><div class="subtitle">Голосовое управление мультиагентной системой</div></div>
+    <span class="badge" id="headerStatus">Не авторизованы</span>
+  </header>
+
+  <section class="panel login" id="loginPanel">
+    <h2 style="margin:0 0 6px;font-size:21px">Вход в систему</h2>
+    <div class="subtitle">Введите ИНН организации и email для уведомлений. Пароль не нужен.</div>
+    <form id="loginForm">
+      <label for="inn">ИНН организации</label>
+      <input id="inn" name="inn" inputmode="numeric" autocomplete="off" maxlength="12" placeholder="Например, 7701234567" required>
+      <label for="email">Электронная почта</label>
+      <input id="email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="name@example.com" required>
+      <button class="primary wide" id="loginButton" type="submit">Войти</button>
+    </form>
+    <div class="status" id="loginStatus" aria-live="polite" style="margin-top:14px"></div>
+    <div class="error" id="loginError" aria-live="polite"></div>
+    <div class="note">Почта используется для отправки писем и не привязана к ИНН. В учебной версии любой человек, знающий ИНН, может войти без пароля; не используйте реальные конфиденциальные данные.</div>
+  </section>
+
+  <section id="workspace" class="workspace">
+    <div class="panel feed-head"><div><strong>История работы агентов</strong><div class="subtitle" id="innLabel"></div></div><span class="badge" id="stageBadge">Подключение…</span></div>
+    <div class="feed" id="feed" role="log" aria-live="polite" aria-relevant="additions"></div>
+    <div class="panel" style="display:flex;flex-direction:column;gap:12px">
+      <div class="voice-row">
+        <button id="voiceButton" class="voice" type="button" aria-label="Начать голосовой ввод">🎙</button>
+        <div class="voice-caption" id="voiceStatus">Нажмите микрофон и произнесите команду. Если голосовой ввод не поддерживается, используйте поле ниже.</div>
+        <label class="toggle" style="margin:0"><input type="checkbox" id="speakToggle" checked> Озвучивать</label>
+      </div>
+      <form id="commandForm" class="composer">
+        <input id="commandInput" maxlength="4000" autocomplete="off" placeholder="Скажите или напишите команду…" required>
+        <button class="primary send" id="sendButton" type="submit">Отправить</button>
+      </form>
+    </div>
+  </section>
+</div>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  let sessionId = null, pollTimer = null, seenIds = new Set(), recognition = null, busy = false;
+  const loginForm = $('loginForm'), loginButton = $('loginButton'), loginStatus = $('loginStatus'), loginError = $('loginError');
+  const feed = $('feed'), workspace = $('workspace'), loginPanel = $('loginPanel');
+  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  function addEvent(ev) {
+    const id = String(ev.id ?? `${ev.agent}-${ev.created_at}-${ev.text}`);
+    if (seenIds.has(id)) return;
+    seenIds.add(id);
+    const wasNearBottom = feed.scrollHeight - feed.scrollTop - feed.clientHeight < 80;
+    const card = document.createElement('article');
+    card.className = 'event' + (ev.kind === 'error' ? ' error' : ev.kind === 'warning' ? ' warning' : '');
+    const meta = document.createElement('div'); meta.className = 'meta';
+    const agent = document.createElement('span'); agent.textContent = ({secretary:'Секретарь',accountant:'Бухгалтер',lawyer:'Юрист',storekeeper:'Кладовщик',system:'Система'})[ev.agent] || ev.agent || 'Агент';
+    const time = document.createElement('span');
+    if (ev.created_at) { const d = new Date(ev.created_at); if (!Number.isNaN(d.getTime())) time.textContent = d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }
+    meta.append(agent,time);
+    const body = document.createElement('div'); body.textContent = ev.text || '';
+    card.append(meta,body); feed.append(card);
+    if (wasNearBottom) feed.scrollTop = feed.scrollHeight;
+    if (ev.speak && $('speakToggle').checked && 'speechSynthesis' in window) {
+      window.speechSynthesis.cancel();
+      const utterance = new SpeechSynthesisUtterance(ev.text || ''); utterance.lang = 'ru-RU'; utterance.rate = 1;
+      window.speechSynthesis.speak(utterance);
+    }
+  }
+
+  async function poll() {
+    if (!sessionId) return;
+    try {
+      const r = await fetch(`/api/session/${encodeURIComponent(sessionId)}`, {cache:'no-store'});
+      if (r.status === 404) { loginStatus.textContent = 'Сессия на сервере потеряна. Обновите страницу и войдите снова.'; loginButton.disabled = true; clearInterval(pollTimer); return; }
+      const data = await r.json();
+      (data.events || []).forEach(addEvent);
+      $('stageBadge').textContent = ({ready:'Готова к команде',working:'Агенты работают…',waiting_user:'Ожидается ваш ответ',waiting_external:'Ожидается переход по ссылке в email',completed:'Заказ завершён',paused:'Пауза после ошибки',invalid:'ИНН не прошёл проверку'})[data.workflow_status] || data.stage || '';
+      if (data.login_status === 'valid') {
+        loginPanel.classList.add('hidden'); workspace.style.display = 'flex';
+        $('headerStatus').textContent = 'Подключено'; $('innLabel').textContent = `ИНН: ${$('inn').value.trim()}`;
+      } else if (data.login_status === 'invalid') {
+        loginStatus.textContent = 'Проверка завершена.';
+        loginError.textContent = (data.events || []).map(e => e.text).join('\n') || 'ИНН не прошёл проверку.';
+        loginButton.disabled = true; $('inn').disabled = true; $('email').disabled = true;
+        $('headerStatus').textContent = 'Проверка не пройдена'; clearInterval(pollTimer);
+      } else {
+        loginStatus.textContent = 'Проверка ИНН…';
+      }
+    } catch (_) { loginStatus.textContent = 'Нет связи с сервером. Повторяю подключение…'; }
+  }
+
+  loginForm.addEventListener('submit', async (e) => {
+    e.preventDefault(); if (busy) return;
+    const inn = $('inn').value.trim(), email = $('email').value.trim();
+    loginError.textContent = '';
+    if (!emailRegex.test(email) || email.length > 254) { loginError.textContent = 'Введите email в корректном формате.'; return; }
+    if (!inn) { loginError.textContent = 'Введите ИНН.'; return; }
+    busy = true; loginButton.disabled = true; loginStatus.textContent = 'Проверка ИНН…'; $('headerStatus').textContent = 'Проверка…';
+    try {
+      const r = await fetch('/api/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({inn,email})});
+      const data = await r.json();
+      if (!r.ok) { loginError.textContent = data.error || 'Не удалось начать вход.'; loginButton.disabled = false; busy = false; return; }
+      sessionId = data.session_id; pollTimer = setInterval(poll, 1200); await poll();
+    } catch (_) { loginError.textContent = 'Не удалось связаться с сервером.'; loginButton.disabled = false; }
+    busy = false;
+  });
+
+  async function sendCommand(text) {
+    text = String(text || '').trim(); if (!text || !sessionId) return;
+    $('commandInput').value = ''; $('sendButton').disabled = true; $('voiceButton').disabled = true;
+    try {
+      const r = await fetch(`/api/session/${encodeURIComponent(sessionId)}/command`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
+      const data = await r.json();
+      if (!r.ok) addEvent({id:`local-${Date.now()}`,agent:'system',text:data.error || 'Не удалось отправить команду.',kind:'error',speak:true});
+      else { $('stageBadge').textContent = 'Команда отправлена…'; }
+    } catch (_) { addEvent({id:`local-${Date.now()}`,agent:'system',text:'Нет связи с сервером. Попробуйте ещё раз.',kind:'error'}); }
+    finally { $('sendButton').disabled = false; $('voiceButton').disabled = false; $('commandInput').focus(); }
+  }
+  $('commandForm').addEventListener('submit', e => { e.preventDefault(); sendCommand($('commandInput').value); });
+
+  const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
+  if (SpeechRecognition) {
+    recognition = new SpeechRecognition(); recognition.lang = 'ru-RU'; recognition.interimResults = false; recognition.continuous = false; recognition.maxAlternatives = 1;
+    recognition.onstart = () => { $('voiceButton').classList.add('listening'); $('voiceStatus').textContent = 'Слушаю… говорите после сигнала браузера.'; };
+    recognition.onend = () => { $('voiceButton').classList.remove('listening'); if ($('voiceStatus').textContent === 'Слушаю… говорите после сигнала браузера.') $('voiceStatus').textContent = 'Нажмите микрофон, чтобы произнести следующую команду.'; };
+    recognition.onerror = (e) => { $('voiceStatus').textContent = `Не удалось распознать речь (${e.error}). Попробуйте ещё раз или напишите команду.`; };
+    recognition.onresult = (e) => { const text = e.results?.[0]?.[0]?.transcript || ''; $('commandInput').value = text; $('voiceStatus').textContent = text ? `Распознано: «${text}»` : 'Речь не распознана.'; if (text) sendCommand(text); };
+  } else { $('voiceButton').disabled = true; $('voiceStatus').textContent = 'В этом браузере нет встроенного распознавания речи. Используйте текстовое поле; попробуйте Chrome на Android для голосового ввода.'; }
+  $('voiceButton').addEventListener('click', () => {
+    if (!recognition) return;
+    try { if ($('voiceButton').classList.contains('listening')) recognition.stop(); else recognition.start(); }
+    catch (_) { $('voiceStatus').textContent = 'Не удалось запустить микрофон. Проверьте разрешение браузера и HTTPS.'; }
+  });
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
+})();
+</script>
+</body>
+</html>
