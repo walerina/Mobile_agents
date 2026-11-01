@@ -27,6 +27,7 @@
     .note { color:var(--muted); font-size:12px; line-height:1.5; margin-top:14px; }
     .error { color:var(--danger); white-space:pre-wrap; line-height:1.5; }
     .status { color:var(--muted); font-size:13px; min-height:18px; }
+    .busy-screen { margin-top:18px; padding:18px; border:1px solid #675638; border-radius:14px; color:#ffe7b4; line-height:1.55; background:#211b10; }
     #workspace { display:none; flex:1; min-height:0; }
     .workspace { display:flex; flex-direction:column; flex:1; min-height:0; gap:12px; }
     .feed-head { display:flex; justify-content:space-between; align-items:center; gap:10px; }
@@ -70,6 +71,7 @@
       <input id="email" name="email" type="email" inputmode="email" autocomplete="email" maxlength="254" placeholder="name@example.com" required>
       <button class="primary wide" id="loginButton" type="submit">Войти</button>
     </form>
+    <div class="busy-screen hidden" id="busyNotice" role="status" aria-live="polite">Сейчас обслуживается другой клиент. Пожалуйста, подождите, пока его заказ будет завершён.</div>
     <div class="status" id="loginStatus" aria-live="polite" style="margin-top:14px"></div>
     <div class="error" id="loginError" aria-live="polite"></div>
     <div class="note">Почта используется для отправки писем и не привязана к ИНН. В учебной версии любой человек, знающий ИНН, может войти без пароля; не используйте реальные конфиденциальные данные.</div>
@@ -94,10 +96,30 @@
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
-  let sessionId = null, pollTimer = null, seenIds = new Set(), recognition = null, busy = false;
+  let sessionId = null, pollTimer = null, seenIds = new Set(), recognition = null, busy = false, canSpeakInput = false, lastWorkflowState = null;
   const loginForm = $('loginForm'), loginButton = $('loginButton'), loginStatus = $('loginStatus'), loginError = $('loginError');
   const feed = $('feed'), workspace = $('workspace'), loginPanel = $('loginPanel');
   const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+
+  function syncComposer() {
+    const enabled = !!sessionId && canSpeakInput && !busy;
+    $('commandInput').disabled = !enabled;
+    $('sendButton').disabled = !enabled;
+    $('voiceButton').disabled = !enabled || !recognition;
+    if (!enabled && recognition && $('voiceButton').classList.contains('listening')) {
+      try { recognition.stop(); } catch (_) {}
+    }
+  }
+
+  function speechText(value) {
+    return String(value || '').replace(/(\d+)\s*шт\./giu, (_m, n) => {
+      const x = Number(n), lastTwo = x % 100, last = x % 10;
+      if (lastTwo >= 11 && lastTwo <= 14) return `${n} штук`;
+      if (last === 1) return `${n} штука`;
+      if (last >= 2 && last <= 4) return `${n} штуки`;
+      return `${n} штук`;
+    });
+  }
 
   function addEvent(ev) {
     const id = String(ev.id ?? `${ev.agent}-${ev.created_at}-${ev.text}`);
@@ -116,7 +138,7 @@
     if (wasNearBottom) feed.scrollTop = feed.scrollHeight;
     if (ev.speak && $('speakToggle').checked && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
-      const utterance = new SpeechSynthesisUtterance(ev.text || ''); utterance.lang = 'ru-RU'; utterance.rate = 1;
+      const utterance = new SpeechSynthesisUtterance(speechText(ev.text || '')); utterance.lang = 'ru-RU'; utterance.rate = 1;
       window.speechSynthesis.speak(utterance);
     }
   }
@@ -127,9 +149,23 @@
       const r = await fetch(`/api/session/${encodeURIComponent(sessionId)}`, {cache:'no-store'});
       if (r.status === 404) { loginStatus.textContent = 'Сессия на сервере потеряна. Обновите страницу и войдите снова.'; loginButton.disabled = true; clearInterval(pollTimer); return; }
       const data = await r.json();
+      lastWorkflowState = data;
+      canSpeakInput = (
+        (data.stage === 'ready' && data.workflow_status === 'ready') ||
+        (data.stage === 'completed' && data.workflow_status === 'completed') ||
+        (data.stage === 'awaiting_items_confirmation' && data.workflow_status === 'waiting_user')
+      );
+      syncComposer();
       (data.events || []).forEach(addEvent);
-      $('stageBadge').textContent = ({ready:'Готова к команде',working:'Агенты работают…',waiting_user:'Ожидается ваш ответ',waiting_external:'Ожидается переход по ссылке в email',completed:'Заказ завершён',paused:'Пауза после ошибки',invalid:'ИНН не прошёл проверку'})[data.workflow_status] || data.stage || '';
-      if (data.login_status === 'valid') {
+      $('stageBadge').textContent = ({ready:'Готова к команде',working:'Агенты работают…',waiting_user:'Ожидается ваш ответ',busy:'Ожидание освобождения системы',waiting_external:'Ожидается переход по ссылке в email',completed:'Заказ завершён',paused:'Пауза после ошибки',invalid:'ИНН не прошёл проверку'})[data.workflow_status] || data.stage || '';
+      if (data.login_status === 'busy') {
+        clearInterval(pollTimer);
+        $('loginForm').classList.add('hidden');
+        $('busyNotice').classList.remove('hidden');
+        $('busyNotice').textContent = (data.events || []).map(e => e.text).join('\n') || 'Сейчас обслуживается другой клиент. Пожалуйста, подождите, пока его заказ будет завершён.';
+        $('headerStatus').textContent = 'Система занята';
+        canSpeakInput = false; syncComposer();
+      } else if (data.login_status === 'valid') {
         loginPanel.classList.add('hidden'); workspace.style.display = 'flex';
         $('headerStatus').textContent = 'Подключено'; $('innLabel').textContent = `ИНН: ${$('inn').value.trim()}`;
       } else if (data.login_status === 'invalid') {
@@ -154,21 +190,33 @@
       const r = await fetch('/api/login', {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({inn,email})});
       const data = await r.json();
       if (!r.ok) { loginError.textContent = data.error || 'Не удалось начать вход.'; loginButton.disabled = false; busy = false; return; }
+      if (data.busy) {
+        $('loginForm').classList.add('hidden');
+        $('busyNotice').classList.remove('hidden');
+        $('busyNotice').textContent = data.message || 'Сейчас обслуживается другой клиент. Пожалуйста, подождите, пока его заказ будет завершён.';
+        $('headerStatus').textContent = 'Система занята';
+        busy = false; return;
+      }
       sessionId = data.session_id; pollTimer = setInterval(poll, 1200); await poll();
     } catch (_) { loginError.textContent = 'Не удалось связаться с сервером.'; loginButton.disabled = false; }
     busy = false;
   });
 
   async function sendCommand(text) {
-    text = String(text || '').trim(); if (!text || !sessionId) return;
-    $('commandInput').value = ''; $('sendButton').disabled = true; $('voiceButton').disabled = true;
+    text = String(text || '').trim(); if (!text || !sessionId || !canSpeakInput || busy) return;
+    busy = true; canSpeakInput = false; syncComposer();
+    $('commandInput').value = '';
     try {
       const r = await fetch(`/api/session/${encodeURIComponent(sessionId)}/command`, {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({text})});
       const data = await r.json();
       if (!r.ok) addEvent({id:`local-${Date.now()}`,agent:'system',text:data.error || 'Не удалось отправить команду.',kind:'error',speak:true});
       else { $('stageBadge').textContent = 'Команда отправлена…'; }
     } catch (_) { addEvent({id:`local-${Date.now()}`,agent:'system',text:'Нет связи с сервером. Попробуйте ещё раз.',kind:'error'}); }
-    finally { $('sendButton').disabled = false; $('voiceButton').disabled = false; $('commandInput').focus(); }
+    finally {
+      busy = false;
+      await poll();
+      if (canSpeakInput) $('commandInput').focus();
+    }
   }
   $('commandForm').addEventListener('submit', e => { e.preventDefault(); sendCommand($('commandInput').value); });
 
@@ -178,12 +226,17 @@
     recognition.onstart = () => { $('voiceButton').classList.add('listening'); $('voiceStatus').textContent = 'Слушаю… говорите после сигнала браузера.'; };
     recognition.onend = () => { $('voiceButton').classList.remove('listening'); if ($('voiceStatus').textContent === 'Слушаю… говорите после сигнала браузера.') $('voiceStatus').textContent = 'Нажмите микрофон, чтобы произнести следующую команду.'; };
     recognition.onerror = (e) => { $('voiceStatus').textContent = `Не удалось распознать речь (${e.error}). Попробуйте ещё раз или напишите команду.`; };
-    recognition.onresult = (e) => { const text = e.results?.[0]?.[0]?.transcript || ''; $('commandInput').value = text; $('voiceStatus').textContent = text ? `Распознано: «${text}»` : 'Речь не распознана.'; if (text) sendCommand(text); };
+    recognition.onresult = (e) => { const text = e.results?.[0]?.[0]?.transcript || ''; $('commandInput').value = text; $('voiceStatus').textContent = text ? `Распознано: «${text}»` : 'Речь не распознана.'; if (text && canSpeakInput) sendCommand(text); };
   } else { $('voiceButton').disabled = true; $('voiceStatus').textContent = 'В этом браузере нет встроенного распознавания речи. Используйте текстовое поле; попробуйте Chrome на Android для голосового ввода.'; }
   $('voiceButton').addEventListener('click', () => {
     if (!recognition) return;
     try { if ($('voiceButton').classList.contains('listening')) recognition.stop(); else recognition.start(); }
     catch (_) { $('voiceStatus').textContent = 'Не удалось запустить микрофон. Проверьте разрешение браузера и HTTPS.'; }
+  });
+  window.addEventListener('pagehide', () => {
+    if (sessionId && navigator.sendBeacon) {
+      navigator.sendBeacon(`/api/logout/${encodeURIComponent(sessionId)}`, new Blob([], {type:'application/json'}));
+    }
   });
   document.addEventListener('visibilitychange', () => { if (!document.hidden) poll(); });
 })();
