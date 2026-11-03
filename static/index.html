@@ -134,7 +134,14 @@
     if (ev.created_at) { const d = new Date(ev.created_at); if (!Number.isNaN(d.getTime())) time.textContent = d.toLocaleTimeString([], {hour:'2-digit',minute:'2-digit'}); }
     meta.append(agent,time);
     const body = document.createElement('div'); body.textContent = ev.text || '';
-    card.append(meta,body); feed.append(card);
+    card.append(meta,body);
+    // События могут приходить пачками не по времени создания (например,
+    // сначала новый event, затем полный snapshot). Вставляем строго по дате.
+    const eventTime = ev.created_at ? Date.parse(ev.created_at) : Number.NEGATIVE_INFINITY;
+    card.dataset.eventTime = Number.isFinite(eventTime) ? String(eventTime) : String(Number.NEGATIVE_INFINITY);
+    const existing = Array.from(feed.children);
+    const before = existing.find(node => Number(node.dataset.eventTime) > eventTime);
+    if (before) feed.insertBefore(card, before); else feed.append(card);
     if (wasNearBottom) feed.scrollTop = feed.scrollHeight;
     if (ev.speak && $('speakToggle').checked && 'speechSynthesis' in window) {
       window.speechSynthesis.cancel();
