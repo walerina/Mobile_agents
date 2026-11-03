@@ -223,8 +223,8 @@
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (SpeechRecognition) {
     recognition = new SpeechRecognition(); recognition.lang = 'ru-RU'; recognition.interimResults = false; recognition.continuous = false; recognition.maxAlternatives = 1;
-    recognition.onstart = () => { $('voiceButton').classList.add('listening'); $('voiceStatus').textContent = 'Слушаю… говорите после сигнала браузера.'; };
-    recognition.onend = () => { $('voiceButton').classList.remove('listening'); if ($('voiceStatus').textContent === 'Слушаю… говорите после сигнала браузера.') $('voiceStatus').textContent = 'Нажмите микрофон, чтобы произнести следующую команду.'; };
+    recognition.onstart = () => { $('voiceButton').classList.add('listening'); $('voiceStatus').textContent = 'Слушаю…'; };
+    recognition.onend = () => { $('voiceButton').classList.remove('listening'); if ($('voiceStatus').textContent === 'Слушаю…') $('voiceStatus').textContent = 'Нажмите микрофон, чтобы произнести следующую команду.'; };
     recognition.onerror = (e) => { $('voiceStatus').textContent = `Не удалось распознать речь (${e.error}). Попробуйте ещё раз или напишите команду.`; };
     recognition.onresult = (e) => { const text = e.results?.[0]?.[0]?.transcript || ''; $('commandInput').value = text; $('voiceStatus').textContent = text ? `Распознано: «${text}»` : 'Речь не распознана.'; if (text && canSpeakInput) sendCommand(text); };
   } else { $('voiceButton').disabled = true; $('voiceStatus').textContent = 'В этом браузере нет встроенного распознавания речи. Используйте текстовое поле; попробуйте Chrome на Android для голосового ввода.'; }
